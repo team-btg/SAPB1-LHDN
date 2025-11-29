@@ -17,7 +17,7 @@ namespace SAP_LHDN
     {
         private readonly ILogger<InvoicePollingWorker> _logger;
         private readonly EInvoiceService _invoiceService;
-        private readonly TimeSpan PollingInterval = TimeSpan.FromSeconds(90); 
+        private readonly TimeSpan PollingInterval = TimeSpan.FromSeconds(90);
         private readonly HanaService _hanaService;
 
         public InvoicePollingWorker(
@@ -37,7 +37,7 @@ namespace SAP_LHDN
             while (!stoppingToken.IsCancellationRequested)
             {
                 _logger.LogInformation($"--- Worker executing cycle at: {DateTimeOffset.Now} ---");
-                 
+
                 await CreateSalesInvoiceTask();
 
                 await CreateDownPaymentInvoiceTask();
@@ -47,17 +47,17 @@ namespace SAP_LHDN
                 await CreateARCNDNTask();
 
                 await CreateAPCNDNTask();
-                 
+
                 await GetStatusListTask();
 
                 _logger.LogInformation($"--- Cycle finished. Waiting {PollingInterval.TotalSeconds} seconds... ---");
-                 
+
                 try
                 {
                     await Task.Delay(PollingInterval, stoppingToken);
                 }
                 catch (TaskCanceledException)
-                { 
+                {
                     break;
                 }
             }
@@ -129,7 +129,7 @@ namespace SAP_LHDN
                 foreach (DataRow lineRow in invoiceGroup)
                 {
                     newInvoice.InvoiceParts.Add(new InvoicePart
-                    { 
+                    {
                         Uom = lineRow["UOM"].ToString() ?? string.Empty,
                         OrderQty = Convert.ToDouble(lineRow["OrderQty"]),
                         UnitPrice = Convert.ToDouble(lineRow["UnitPrice"]),
@@ -149,13 +149,13 @@ namespace SAP_LHDN
                     _logger.LogInformation($"[DPInvoice] SUCCESS RefNo {newInvoice.RefNo}: {result.Message}");
                     invoicesSubmitted++;
 
-                    await _hanaService.HanaExecuteNonQuery($"UPDATE EINV_STAGING.EDPI SET \"isCaptured\" = 'Y', \"UPDATE_DATE\" = now(), \"StatusMsg\" = '' WHERE \"DocEntry\" = {headerRow["DocEntry"].ToString()}");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EDPI", "Y");
                 }
                 else
                 {
                     _logger.LogError($"[DPInvoice Create] FAILURE RefNo {newInvoice.RefNo}: {result.Message}");
 
-                   await _hanaService.HanaExecuteNonQuery($"UPDATE EINV_STAGING.EDPI SET \"isCaptured\" = 'E', \"UPDATE_DATE\" = now(), \"StatusMsg\" = '{result.Message.Truncate(300)}' WHERE \"DocEntry\" = {headerRow["DocEntry"].ToString()}");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EDPI", "E", result.Message.Truncate(300));
                 }
             }
 
@@ -163,7 +163,7 @@ namespace SAP_LHDN
         }
 
         private async Task CreateSalesInvoiceTask()
-        { 
+        {
             DataTable oDt = null;
             try
             {
@@ -181,14 +181,14 @@ namespace SAP_LHDN
                 _logger.LogInformation("[Sales Create] No new sales invoices found in HANA staging table.");
                 return;
             }
-             
+
             var invoiceGroups = oDt.AsEnumerable()
                 .GroupBy(row => row.Field<int>("RefNo"));
 
             int invoicesSubmitted = 0;
 
             foreach (var invoiceGroup in invoiceGroups)
-            { 
+            {
                 DataRow headerRow = invoiceGroup.First();
 
                 var newInvoice = new SalesInvoice
@@ -213,7 +213,7 @@ namespace SAP_LHDN
                     Email = headerRow["Email"].ToString() ?? string.Empty,
                     Country = headerRow["Country"].ToString() ?? string.Empty,
                     PaymentTerm = headerRow["PaymentTerm"].ToString() ?? string.Empty,
-                     
+
                     CreatedBy = headerRow["CreatedBy"].ToString(),
 
                     Currency = headerRow["Currency"].ToString() ?? string.Empty,
@@ -222,11 +222,11 @@ namespace SAP_LHDN
 
                     InvoiceParts = new List<InvoicePart>()
                 };
-                 
+
                 foreach (DataRow lineRow in invoiceGroup)
                 {
                     newInvoice.InvoiceParts.Add(new InvoicePart
-                    { 
+                    {
                         Uom = lineRow["UOM"].ToString() ?? string.Empty,
                         OrderQty = Convert.ToDouble(lineRow["OrderQty"]),
                         UnitPrice = Convert.ToDouble(lineRow["UnitPrice"]),
@@ -238,7 +238,7 @@ namespace SAP_LHDN
                         TaxAmount = Convert.ToDecimal(lineRow["TaxAmount"])
                     });
                 }
-                 
+
                 var result = await _invoiceService.CreateSalesInvoiceAsync(newInvoice);
 
                 if (result.Success)
@@ -246,13 +246,13 @@ namespace SAP_LHDN
                     _logger.LogInformation($"[Sales Create] SUCCESS RefNo {newInvoice.RefNo}: {result.Message}");
                     invoicesSubmitted++;
 
-                   await _hanaService.HanaExecuteNonQuery($"UPDATE EINV_STAGING.EINV SET \"isCaptured\" = 'Y', \"UPDATE_DATE\" = now(), \"StatusMsg\" = '' WHERE \"DocEntry\" = {headerRow["DocEntry"].ToString()}");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EINV", "Y");
                 }
                 else
                 {
                     _logger.LogError($"[Sales Create] FAILURE RefNo {newInvoice.RefNo}: {result.Message}");
 
-                    await _hanaService.HanaExecuteNonQuery($"UPDATE EINV_STAGING.EINV SET \"isCaptured\" = 'E', \"UPDATE_DATE\" = now(), \"StatusMsg\" = '{result.Message.Truncate(300)}' WHERE \"DocEntry\" = {headerRow["DocEntry"].ToString()}");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EINV", "E", result.Message.Truncate(300));
                 }
             }
 
@@ -324,7 +324,7 @@ namespace SAP_LHDN
                 foreach (DataRow lineRow in invoiceGroup)
                 {
                     newInvoice.InvoiceParts.Add(new InvoicePart
-                    { 
+                    {
                         Uom = lineRow["UOM"].ToString() ?? string.Empty,
                         OrderQty = Convert.ToDouble(lineRow["OrderQty"]),
                         UnitPrice = Convert.ToDouble(lineRow["UnitPrice"]),
@@ -344,13 +344,13 @@ namespace SAP_LHDN
                     _logger.LogInformation($"[Purchase Create] SUCCESS RefNo {newInvoice.RefNo}: {result.Message}");
                     invoicesSubmitted++;
 
-                    await _hanaService.HanaExecuteNonQuery($"UPDATE EINV_STAGING.EPCH SET \"isCaptured\" = 'Y', \"UPDATE_DATE\" = now(), \"StatusMsg\" = '' WHERE \"DocEntry\" = {headerRow["DocEntry"].ToString()}");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EPCH", "Y");
                 }
                 else
                 {
                     _logger.LogError($"[Purchase Create] FAILURE RefNo {newInvoice.RefNo}: {result.Message}");
 
-                    await _hanaService.HanaExecuteNonQuery($"UPDATE EINV_STAGING.EPCH SET \"isCaptured\" = 'E', \"UPDATE_DATE\" = now(), \"StatusMsg\" = '{result.Message.Truncate(300)}' WHERE \"DocEntry\" = {headerRow["DocEntry"].ToString()}");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EPCH", "E", result.Message.Truncate(300));
                 }
             }
 
@@ -389,7 +389,7 @@ namespace SAP_LHDN
                 var newInvoice = new ARCreditMemo
                 {
                     RefNo = invoiceGroup.Key.ToString(),
-                    Date = Convert.ToDateTime(headerRow["PostDate"]), 
+                    Date = Convert.ToDateTime(headerRow["PostDate"]),
                     HeaderAmount = Convert.ToDecimal(headerRow["HeaderAmount"]),
                     Remark = headerRow["U_PORemark"].ToString() ?? string.Empty,
 
@@ -404,7 +404,7 @@ namespace SAP_LHDN
                     Tin = headerRow["TIN"].ToString() ?? string.Empty,
                     Brn = headerRow["BRN"].ToString() ?? string.Empty,
                     Email = headerRow["Email"].ToString() ?? string.Empty,
-                    Country = headerRow["Country"].ToString() ?? string.Empty, 
+                    Country = headerRow["Country"].ToString() ?? string.Empty,
 
                     CreatedBy = headerRow["CreatedBy"].ToString(),
 
@@ -439,13 +439,13 @@ namespace SAP_LHDN
                     _logger.LogInformation($"[ARCM Create] SUCCESS RefNo {newInvoice.RefNo}: {result.Message}");
                     invoicesSubmitted++;
 
-                    await _hanaService.HanaExecuteNonQuery($"UPDATE EINV_STAGING.ERIN SET \"isCaptured\" = 'Y', \"UPDATE_DATE\" = now(), \"StatusMsg\" = '' WHERE \"DocEntry\" = {headerRow["DocEntry"].ToString()}");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "ERIN", "Y");
                 }
                 else
                 {
                     _logger.LogError($"[ARCM Create] FAILURE RefNo {newInvoice.RefNo}: {result.Message}");
 
-                    await _hanaService.HanaExecuteNonQuery($"UPDATE EINV_STAGING.ERIN SET \"isCaptured\" = 'E', \"UPDATE_DATE\" = now(), \"StatusMsg\" = '{result.Message.Truncate(300)}' WHERE \"DocEntry\" = {headerRow["DocEntry"].ToString()}");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "ERIN", "E", result.Message.Truncate(300));
                 }
             }
 
@@ -535,13 +535,13 @@ namespace SAP_LHDN
                     _logger.LogInformation($"[ARCM Create] SUCCESS RefNo {newInvoice.RefNo}: {result.Message}");
                     invoicesSubmitted++;
 
-                    await _hanaService.HanaExecuteNonQuery($"UPDATE EINV_STAGING.ERPC SET \"isCaptured\" = 'Y', \"UPDATE_DATE\" = now(), \"StatusMsg\" = '' WHERE \"DocEntry\" = {headerRow["DocEntry"].ToString()}");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "ERPC", "Y");
                 }
                 else
                 {
                     _logger.LogError($"[APCM Create] FAILURE RefNo {newInvoice.RefNo}: {result.Message}");
 
-                    await _hanaService.HanaExecuteNonQuery($"UPDATE EINV_STAGING.ERPC SET \"isCaptured\" = 'E', \"UPDATE_DATE\" = now(), \"StatusMsg\" = '{result.Message.Truncate(300)}' WHERE \"DocEntry\" = {headerRow["DocEntry"].ToString()}");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "ERPC", "E", result.Message.Truncate(300));
                 }
             }
 
@@ -549,11 +549,11 @@ namespace SAP_LHDN
         }
 
         private async Task GetStatusListTask()
-        { 
+        {
             foreach (var docType in DocumentTypesToCheck)
             {
                 List<Reference> references = GetReferences(docType);
-                if(references.Count > 0)
+                if (references.Count > 0)
                 {
                     List<string> refNo = references
                     .Select(r => r.DocNum)
@@ -562,7 +562,7 @@ namespace SAP_LHDN
                     var request = new EInvoiceStatusRequest
                     {
                         DocType = docType,
-                        RefNo = refNo 
+                        RefNo = refNo
                     };
 
                     var listOfInvoices = await _invoiceService.GetEInvoiceStatusListAsync(request);
@@ -571,16 +571,16 @@ namespace SAP_LHDN
                         List<EInvoiceStatusData> validatedInvoices = listOfInvoices.Where(r => r.Status == "Validated").ToList();
                         if (validatedInvoices.Count > 0)
                         {
-                            foreach(EInvoiceStatusData data in validatedInvoices)
+                            foreach (EInvoiceStatusData data in validatedInvoices)
                             {
                                 Reference reference = references.Where(w => w.DocNum == data.RefNo).FirstOrDefault();
 
-                                await UpdateRecord(reference.DocEntry, reference.TableName);
+                                await UpdateRecord(reference.DocEntry, reference.TableName, "U", "");
                                 await UpdateSAPRecord(reference.SAPTableName, reference.DocEntry, data.EInvIRBMNo, data.EInvValDate.ToString(), data.EInvValLink);
                             }
                         }
                     }
-                     
+
                 }
             }
         }
@@ -592,7 +592,7 @@ namespace SAP_LHDN
             "ARCNDN",
             "APCNDN"
         };
-         
+
         private List<Reference> GetReferences(string tableName)
         {
             List<Reference> references = new List<Reference>();
@@ -609,7 +609,7 @@ namespace SAP_LHDN
             }
 
             if (oDt == null || oDt.Rows.Count == 0)
-            { 
+            {
                 return references;
             }
 
@@ -628,9 +628,36 @@ namespace SAP_LHDN
             return references;
         }
 
-        async Task UpdateRecord(string docEntry, string tableName)
+        async Task UpdateRecord(string docEntry, string tableName, string status, string message = "")
         {
-            await _hanaService.HanaExecuteNonQuery($"UPDATE EINV_STAGING.\"{tableName}\" SET \"isCaptured\" = 'U', \"StatusMsg\" = '', \"CAPTURED_DATE\" = now() WHERE \"DocEntry\" = {docEntry}");
+            try
+            {
+                
+                string dateColumn = "UPDATE_DATE";
+                switch (status)
+                {
+                    case "U": 
+                        dateColumn = "CAPTURED_DATE";
+                        break;
+                    default:
+                        dateColumn = "UPDATE_DATE";
+                        break;
+                }
+                 
+                string safeMessage = message?.Replace("'", "''") ?? "";
+                 
+                string sqlQuery = $@"UPDATE EINV_STAGING.""{tableName}"" 
+                             SET ""isCaptured"" = '{status}', 
+                                 ""StatusMsg"" = '{safeMessage}', 
+                                 ""{dateColumn}"" = now() 
+                             WHERE ""DocEntry"" = {docEntry}";
+                 
+                await _hanaService.HanaExecuteNonQuery(sqlQuery);
+            }
+            catch (Exception ex)
+            { 
+                _logger.LogError(ex, $"[UpdateRecord Error] Failed to update {tableName} for DocEntry: {docEntry}. Status intended: {status}");
+            }
         }
 
         async Task UpdateSAPRecord(string sapTableName, string docEntry, string EInvIRBMNo, string EInvValDate, string EInvValLink)
