@@ -27,7 +27,7 @@ namespace SAP_LHDN.Models
         [JsonProperty("TaxType")]
         public string TaxType { get; set; } = string.Empty;
         [JsonProperty("TaxRate")]
-        public double TaxRate { get; set; }
+        public decimal TaxRate { get; set; }
         [JsonProperty("TaxAmount")]
         public decimal TaxAmount { get; set; }
         [JsonProperty("TaxExemption")]
@@ -92,7 +92,7 @@ namespace SAP_LHDN.Models
         [JsonProperty("Currency")]
         public string Currency { get; set; } = string.Empty;
         [JsonProperty("CurrencyRate")]
-        public double CurrencyRate { get; set; }
+        public decimal CurrencyRate { get; set; }
         [JsonProperty("Terms")]
         public string Terms { get; set; } = string.Empty;
 

@@ -40,7 +40,7 @@ namespace SAP_LHDN
 
                 await CreateSalesInvoiceTask();
 
-                await CreateDownPaymentInvoiceTask();
+                //await CreateDownPaymentInvoiceTask();
 
                 await CreatePurchaseInvoiceTask();
 
@@ -120,7 +120,7 @@ namespace SAP_LHDN
                     CreatedBy = headerRow["CreatedBy"].ToString(),
 
                     Currency = headerRow["Currency"].ToString() ?? string.Empty,
-                    CurrencyRate = Convert.ToDouble(headerRow["CurrencyRate"]),
+                    CurrencyRate = Convert.ToDecimal(headerRow["CurrencyRate"]),
                     CreatedDate = DateTimeOffset.Parse(headerRow["CreatedDate"].ToString() ?? DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ssZ")),
 
                     InvoiceParts = new List<InvoicePart>()
@@ -137,7 +137,7 @@ namespace SAP_LHDN
                         Description = lineRow["Description"].ToString() ?? string.Empty,
                         Classification = lineRow["Classification"].ToString() ?? string.Empty,
                         TaxType = "06" ?? string.Empty,
-                        TaxRate = Convert.ToDouble(lineRow["TaxRate"]),
+                        TaxRate = Convert.ToDecimal(lineRow["TaxRate"]),
                         TaxAmount = Convert.ToDecimal(lineRow["TaxAmount"])
                     });
                 }
@@ -217,7 +217,7 @@ namespace SAP_LHDN
                     CreatedBy = headerRow["CreatedBy"].ToString(),
 
                     Currency = headerRow["Currency"].ToString() ?? string.Empty,
-                    CurrencyRate = Convert.ToDouble(headerRow["CurrencyRate"]),
+                    CurrencyRate = Convert.ToDecimal(headerRow["CurrencyRate"]),
                     CreatedDate = DateTimeOffset.Parse(headerRow["CreatedDate"].ToString() ?? DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ssZ")),
 
                     InvoiceParts = new List<InvoicePart>()
@@ -234,7 +234,7 @@ namespace SAP_LHDN
                         Description = lineRow["Description"].ToString() ?? string.Empty,
                         Classification = lineRow["Classification"].ToString() ?? string.Empty,
                         TaxType = "06" ?? string.Empty,
-                        TaxRate = Convert.ToDouble(lineRow["TaxRate"]),
+                        TaxRate = Convert.ToDecimal(lineRow["TaxRate"]),
                         TaxAmount = Convert.ToDecimal(lineRow["TaxAmount"])
                     });
                 }
@@ -314,7 +314,7 @@ namespace SAP_LHDN
                     CreatedBy = headerRow["CreatedBy"].ToString(),
 
                     Currency = headerRow["Currency"].ToString() ?? string.Empty,
-                    CurrencyRate = Convert.ToDouble(headerRow["CurrencyRate"]),
+                    CurrencyRate = Convert.ToDecimal(headerRow["CurrencyRate"]),
                     CreatedDate = DateTimeOffset.Parse(headerRow["CreatedDate"].ToString() ?? DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ssZ")),
                     MsicCode = headerRow["AliasName"].ToString(),
 
@@ -332,7 +332,7 @@ namespace SAP_LHDN
                         Description = lineRow["Description"].ToString() ?? string.Empty,
                         Classification = lineRow["Classification"].ToString() ?? string.Empty,
                         TaxType = "06" ?? string.Empty,
-                        TaxRate = Convert.ToDouble(lineRow["TaxRate"]),
+                        TaxRate = Convert.ToDecimal(lineRow["TaxRate"]),
                         TaxAmount = Convert.ToDecimal(lineRow["TaxAmount"])
                     });
                 }

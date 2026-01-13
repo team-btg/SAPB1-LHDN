@@ -35,6 +35,9 @@ namespace SAP_LHDN.Models
         private const string StatusEndpoint = "api/einvoicestatus";
 
         // Auth Credentials
+        //Staging Credentials
+        //username: lqzpqlw-9fuevkd-vjz9-m2sq-kqclkqqmmnffg 
+        //password: exevnqn-r3u6-xsb3-68qc-plqtnhfnvfe
         private const string UsernameValue = "lqzpqlw-9fuevkd-vjz9-m2sq-kqclkqqmmnffg";
         private const string PasswordValue = "exevnqn-r3u6-xsb3-68qc-plqtnhfnvfe";
         private const string GrantType = "password";
