@@ -1,15 +1,16 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Data;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.Extensions.Hosting;
+﻿using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using SAP_LHDN.Models;
 using SAP_LHDN.Models.CreditNote;
 using SAP_LHDN.Models.Invoice;
 using StringExtensions;
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Linq;
+using System.Runtime;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace SAP_LHDN
 {
@@ -19,20 +20,24 @@ namespace SAP_LHDN
         private readonly EInvoiceService _invoiceService;
         private readonly TimeSpan PollingInterval = TimeSpan.FromSeconds(90);
         private readonly HanaService _hanaService;
+        private readonly WorkerSettings _settings;
 
         public InvoicePollingWorker(
             ILogger<InvoicePollingWorker> logger,
             EInvoiceService invoiceService,
-            HanaService hanaService)
+            HanaService hanaService,
+            WorkerSettings settings)
         {
             _logger = logger;
             _invoiceService = invoiceService;
             _hanaService = hanaService;
+            _settings = settings;
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("--- E-Invoice Polling Worker Service is starting... ---");
+            string mode = _settings.EnableTest ? "TEST/STAGING" : "PRODUCTION";
+            _logger.LogInformation($"--- E-Invoice Service Starting in {mode} Mode ---");
 
             while (!stoppingToken.IsCancellationRequested)
             {

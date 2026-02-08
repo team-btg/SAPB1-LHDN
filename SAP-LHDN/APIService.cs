@@ -20,11 +20,13 @@ namespace SAP_LHDN.Models
             public string Message { get; set; } = string.Empty;
         }
 
-        private string _accessToken = string.Empty;
-        private DateTimeOffset _tokenExpiresAt = DateTimeOffset.MinValue;
+        // --- Token Cache per Base URL ---
+        // Key: BaseUrl (string), Value: (Token, Expiry)
+        private readonly Dictionary<string, (string token, DateTimeOffset expiry)> _tokenCache = new Dictionary<string, (string, DateTimeOffset)>();
 
         private readonly HttpClient _httpClient;
         private readonly ILogger<EInvoiceService> _logger;
+        private readonly string _defaultApiBaseUrl;
 
         // API Constants 
         private const string TokenEndpoint = "connect/token";
@@ -34,10 +36,7 @@ namespace SAP_LHDN.Models
         private const string APCMEndpoint = "api/apcndn/create";
         private const string StatusEndpoint = "api/einvoicestatus";
 
-        // Auth Credentials
-        //Staging Credentials
-        //username: lqzpqlw-9fuevkd-vjz9-m2sq-kqclkqqmmnffg 
-        //password: exevnqn-r3u6-xsb3-68qc-plqtnhfnvfe
+        // Auth Credentials (Staging provided by user)
         private const string UsernameValue = "lqzpqlw-9fuevkd-vjz9-m2sq-kqclkqqmmnffg";
         private const string PasswordValue = "exevnqn-r3u6-xsb3-68qc-plqtnhfnvfe";
         private const string GrantType = "password";
@@ -46,32 +45,37 @@ namespace SAP_LHDN.Models
         {
             _httpClient = httpClient;
             _logger = logger;
+            _defaultApiBaseUrl = apiBaseUrl?.TrimEnd('/') ?? string.Empty;
 
-            if (string.IsNullOrEmpty(apiBaseUrl))
+            // Ensure BaseAddress is set as a fallback to satisfy HttpClient requirements.
+            if (_httpClient.BaseAddress == null && !string.IsNullOrEmpty(_defaultApiBaseUrl))
             {
-                throw new ArgumentException("ApiBaseUrl cannot be null or empty.", nameof(apiBaseUrl));
-            }
-
-            if (_httpClient.BaseAddress == null)
-            {
-                _httpClient.BaseAddress = new Uri(apiBaseUrl);
+                _httpClient.BaseAddress = new Uri(_defaultApiBaseUrl + "/");
             }
         }
 
-        /// <summary>
-        /// Attempts to acquire a new access token if one is not present.
-        /// </summary>
-        public async Task<bool> EnsureAuthenticatedAsync()
+        private string GetTargetUrl(string endpoint, string overrideBaseUrl)
         {
-            if (!string.IsNullOrEmpty(_accessToken) && DateTimeOffset.UtcNow < _tokenExpiresAt)
+            var baseUrl = string.IsNullOrEmpty(overrideBaseUrl) ? _defaultApiBaseUrl : overrideBaseUrl.TrimEnd('/');
+            return $"{baseUrl}/{endpoint.TrimStart('/')}";
+        }
+
+        /// <summary>
+        /// Gets a valid token for the specific base URL provided.
+        /// </summary>
+        public async Task<string> GetValidTokenAsync(string baseUrl)
+        {
+            // 1. Check cache for valid token
+            if (_tokenCache.TryGetValue(baseUrl, out var cached) && DateTimeOffset.UtcNow < cached.expiry)
             {
-                _logger.LogDebug("Cached token is still valid. Skipping network request."); 
-                _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _accessToken);
-                return true;
+                return cached.token;
             }
 
-            _logger.LogInformation("Attempting to acquire new access token...");
-            var content = new FormUrlEncodedContent(new[]
+            // 2. Request new token from environment-specific endpoint
+            var tokenUrl = $"{baseUrl}/{TokenEndpoint.TrimStart('/')}";
+            _logger.LogInformation($"Requesting new token for environment: {baseUrl}");
+
+            var authContent = new FormUrlEncodedContent(new[]
             {
                 new KeyValuePair<string, string>("username", UsernameValue),
                 new KeyValuePair<string, string>("password", PasswordValue),
@@ -80,7 +84,7 @@ namespace SAP_LHDN.Models
 
             try
             {
-                var response = await _httpClient.PostAsync(TokenEndpoint, content);
+                var response = await _httpClient.PostAsync(new Uri(tokenUrl), authContent);
                 response.EnsureSuccessStatusCode();
 
                 var jsonResponse = await response.Content.ReadAsStringAsync();
@@ -88,23 +92,62 @@ namespace SAP_LHDN.Models
 
                 if (tokenResponse != null && !string.IsNullOrEmpty(tokenResponse.AccessToken))
                 {
-                    _accessToken = tokenResponse.AccessToken;
-                    _tokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(tokenResponse.ExpiresIn - 5);
-                     
-                    _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
-                        tokenResponse.TokenType,
-                        tokenResponse.AccessToken
-                    );
-                    _logger.LogInformation("Successfully acquired and set new access token.");
-                    return true;
+                    var expiry = DateTimeOffset.UtcNow.AddSeconds(tokenResponse.ExpiresIn - 10);
+                    _tokenCache[baseUrl] = (tokenResponse.AccessToken, expiry);
+                    return tokenResponse.AccessToken;
                 }
-                _logger.LogError("Token response was null or missing access token.");
-                return false;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to authenticate and obtain security token.");
-                return false;
+                _logger.LogError(ex, $"Failed to acquire token for {baseUrl}");
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Generic method to handle authorized POST requests to different environments.
+        /// </summary>
+        private async Task<ServiceResult> SendAuthorizedRequestAsync<T>(string endpoint, T data, string overrideBaseUrl)
+        {
+            var baseUrl = string.IsNullOrEmpty(overrideBaseUrl) ? _defaultApiBaseUrl : overrideBaseUrl.TrimEnd('/');
+            var targetUrl = GetTargetUrl(endpoint, overrideBaseUrl);
+
+            var token = await GetValidTokenAsync(baseUrl);
+            if (string.IsNullOrEmpty(token))
+            {
+                return new ServiceResult { Success = false, Message = $"Authentication failed for {baseUrl}" };
+            }
+
+            try
+            {
+                var jsonContent = JsonConvert.SerializeObject(data);
+
+                using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(targetUrl)))
+                {
+                    request.Content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+                    var response = await _httpClient.SendAsync(request);
+                    var resultBody = await response.Content.ReadAsStringAsync();
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        return new ServiceResult { Success = true, Message = resultBody };
+                    }
+
+                    // Format detailed validation errors if request failed
+                    var defaultError = $"API Error ({response.StatusCode}): {resultBody}";
+                    var friendlyError = FormatValidationErrors(resultBody, defaultError);
+
+                    _logger.LogWarning($"Request to {targetUrl} failed: {friendlyError}");
+                    return new ServiceResult { Success = false, Message = friendlyError };
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Exception during request to {targetUrl}");
+                return new ServiceResult { Success = false, Message = $"Internal Error: {ex.Message}" };
             }
         }
 
@@ -112,7 +155,6 @@ namespace SAP_LHDN.Models
         {
             try
             {
-                // Attempt to deserialize the validation error structure
                 var validationError = JsonConvert.DeserializeObject<ApiValidationErrorResponse>(errorContent);
                 if (validationError?.ModelState != null && validationError.ModelState.Count > 0)
                 {
@@ -120,7 +162,6 @@ namespace SAP_LHDN.Models
                     errorBuilder.AppendLine($"Validation Failed: {validationError.Message}");
                     errorBuilder.AppendLine("Details:");
 
-                    // Loop through the dictionary of field errors
                     foreach (var kvp in validationError.ModelState)
                     {
                         errorBuilder.AppendLine($"  - Field: {kvp.Key}");
@@ -134,215 +175,64 @@ namespace SAP_LHDN.Models
             }
             catch (JsonException)
             {
-                // Failed to deserialize as validation error, fall through to default message
-                _logger.LogWarning("Failed to deserialize detailed validation error. Returning raw error content.");
+                _logger.LogWarning("Failed to deserialize detailed validation error.");
             }
-
             return defaultMessage;
         }
 
-        /// <summary>
-        /// Creates a new sales invoice via POST /api/salesinvoice/create.
-        /// </summary>
-        // FIX: Changed return type from Task<(bool, string)> to Task<ServiceResult>
-        public async Task<ServiceResult> CreateSalesInvoiceAsync(SalesInvoice newInvoice)
+        public async Task<ServiceResult> CreateSalesInvoiceAsync(SalesInvoice newInvoice, string overrideBaseUrl = null)
         {
-            if (!await EnsureAuthenticatedAsync())
+            var result = await SendAuthorizedRequestAsync(SalesCreateEndpoint, newInvoice, overrideBaseUrl);
+            if (result.Success)
             {
-                return new ServiceResult { Success = false, Message = "Sales Invoice creation failed: Authentication required." };
+                var successResponse = JsonConvert.DeserializeObject<ApiSuccessResponse>(result.Message);
+                result.Message = $"Sales Invoice RefNo {newInvoice.RefNo} created successfully. API Message: {successResponse?.Success?.Message ?? "No specific message."}";
             }
-
-            try
-            {
-                var jsonContent = JsonConvert.SerializeObject(newInvoice);
-                var httpContent = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-
-                var response = await _httpClient.PostAsync(SalesCreateEndpoint, httpContent);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    var content = await response.Content.ReadAsStringAsync();
-                    var successResponse = JsonConvert.DeserializeObject<ApiSuccessResponse>(content);
-                    return new ServiceResult
-                    {
-                        Success = true,
-                        Message = $"Sales Invoice RefNo {newInvoice.RefNo} created successfully. API Message: {successResponse?.Success?.Message ?? "No specific message."}"
-                    };
-                }
-                else
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    var defaultError = $"API Error on Sales Invoice creation ({response.StatusCode}): {errorContent}";
-                    var friendlyError = FormatValidationErrors(errorContent, defaultError);
-                    return new ServiceResult { Success = false, Message = friendlyError };
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Exception during Sales Invoice creation for RefNo {newInvoice.RefNo}.");
-                return new ServiceResult { Success = false, Message = $"Internal Error: {ex.Message}" };
-            }
+            return result;
         }
 
-        /// <summary>
-        /// Creates a new purchase invoice via POST /api/purchaseinvoice/create.
-        /// </summary>
-        // FIX: Changed return type from Task<(bool, string)> to Task<ServiceResult>
-        public async Task<ServiceResult> CreatePurchaseInvoiceAsync(PurchaseInvoice newInvoice)
+        public async Task<ServiceResult> CreatePurchaseInvoiceAsync(PurchaseInvoice newInvoice, string overrideBaseUrl = null)
         {
-            if (!await EnsureAuthenticatedAsync())
+            var result = await SendAuthorizedRequestAsync(PurchaseCreateEndpoint, newInvoice, overrideBaseUrl);
+            if (result.Success)
             {
-                return new ServiceResult { Success = false, Message = "Purchase Invoice creation failed: Authentication required." };
+                var successResponse = JsonConvert.DeserializeObject<ApiSuccessResponse>(result.Message);
+                result.Message = $"Purchase Invoice RefNo {newInvoice.RefNo} created successfully. API Message: {successResponse?.Success?.Message ?? "No specific message."}";
             }
-
-            try
-            {
-                var jsonContent = JsonConvert.SerializeObject(newInvoice);
-                var httpContent = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-
-                var response = await _httpClient.PostAsync(PurchaseCreateEndpoint, httpContent);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    var content = await response.Content.ReadAsStringAsync();
-                    var successResponse = JsonConvert.DeserializeObject<ApiSuccessResponse>(content);
-                    return new ServiceResult
-                    {
-                        Success = true,
-                        Message = $"Purchase Invoice RefNo {newInvoice.RefNo} created successfully. API Message: {successResponse?.Success?.Message ?? "No specific message."}"
-                    };
-                }
-                else
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    var defaultError = $"API Error on Purchase Invoice creation ({response.StatusCode}): {errorContent}";
-                    var friendlyError = FormatValidationErrors(errorContent, defaultError);
-                    return new ServiceResult { Success = false, Message = friendlyError };
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Exception during Purchase Invoice creation for RefNo {newInvoice.RefNo}.");
-                return new ServiceResult { Success = false, Message = $"Internal Error: {ex.Message}" };
-            }
+            return result;
         }
 
-        public async Task<ServiceResult> CreateARCMAsync(ARCreditMemo newInvoice)
+        public async Task<ServiceResult> CreateARCMAsync(ARCreditMemo newInvoice, string overrideBaseUrl = null)
         {
-            if (!await EnsureAuthenticatedAsync())
+            var result = await SendAuthorizedRequestAsync(ARCMEndpoint, newInvoice, overrideBaseUrl);
+            if (result.Success)
             {
-                return new ServiceResult { Success = false, Message = "ARCM creation failed: Authentication required." };
+                var successResponse = JsonConvert.DeserializeObject<ApiSuccessResponse>(result.Message);
+                result.Message = $"ARCM RefNo {newInvoice.RefNo} created successfully. API Message: {successResponse?.Success?.Message ?? "No specific message."}";
             }
-
-            try
-            {
-                var jsonContent = JsonConvert.SerializeObject(newInvoice);
-                var httpContent = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-
-                var response = await _httpClient.PostAsync(ARCMEndpoint, httpContent);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    var content = await response.Content.ReadAsStringAsync();
-                    var successResponse = JsonConvert.DeserializeObject<ApiSuccessResponse>(content);
-                    return new ServiceResult
-                    {
-                        Success = true,
-                        Message = $"ARCM RefNo {newInvoice.RefNo} created successfully. API Message: {successResponse?.Success?.Message ?? "No specific message."}"
-                    };
-                }
-                else
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    var defaultError = $"API Error on ARCM creation ({response.StatusCode}): {errorContent}";
-                    var friendlyError = FormatValidationErrors(errorContent, defaultError);
-                    return new ServiceResult { Success = false, Message = friendlyError };
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Exception during ARCM creation for RefNo {newInvoice.RefNo}.");
-                return new ServiceResult { Success = false, Message = $"Internal Error: {ex.Message}" };
-            }
+            return result;
         }
 
-        public async Task<ServiceResult> CreateAPCMAsync(APCreditMemo newInvoice)
+        public async Task<ServiceResult> CreateAPCMAsync(APCreditMemo newInvoice, string overrideBaseUrl = null)
         {
-            if (!await EnsureAuthenticatedAsync())
+            var result = await SendAuthorizedRequestAsync(APCMEndpoint, newInvoice, overrideBaseUrl);
+            if (result.Success)
             {
-                return new ServiceResult { Success = false, Message = "APCM creation failed: Authentication required." };
+                var successResponse = JsonConvert.DeserializeObject<ApiSuccessResponse>(result.Message);
+                result.Message = $"APCM RefNo {newInvoice.RefNo} created successfully. API Message: {successResponse?.Success?.Message ?? "No specific message."}";
             }
-
-            try
-            {
-                var jsonContent = JsonConvert.SerializeObject(newInvoice);
-                var httpContent = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-
-                var response = await _httpClient.PostAsync(APCMEndpoint, httpContent);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    var content = await response.Content.ReadAsStringAsync();
-                    var successResponse = JsonConvert.DeserializeObject<ApiSuccessResponse>(content);
-                    return new ServiceResult
-                    {
-                        Success = true,
-                        Message = $"APCM RefNo {newInvoice.RefNo} created successfully. API Message: {successResponse?.Success?.Message ?? "No specific message."}"
-                    };
-                }
-                else
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    var defaultError = $"API Error on APCM creation ({response.StatusCode}): {errorContent}";
-                    var friendlyError = FormatValidationErrors(errorContent, defaultError);
-                    return new ServiceResult { Success = false, Message = friendlyError };
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Exception during APCM creation for RefNo {newInvoice.RefNo}.");
-                return new ServiceResult { Success = false, Message = $"Internal Error: {ex.Message}" };
-            }
+            return result;
         }
 
-        /// <summary>
-        /// Retrieves a list of E-Invoice statuses via POST /api/einvoicestatus.
-        /// </summary>
-        public async Task<List<EInvoiceStatusData>> GetEInvoiceStatusListAsync(EInvoiceStatusRequest request)
+        public async Task<List<EInvoiceStatusData>> GetEInvoiceStatusListAsync(EInvoiceStatusRequest request, string overrideBaseUrl = null)
         {
-            if (!await EnsureAuthenticatedAsync())
+            var result = await SendAuthorizedRequestAsync(StatusEndpoint, request, overrideBaseUrl);
+            if (result.Success)
             {
-                _logger.LogWarning("Status retrieval failed: Authentication required.");
-                return new List<EInvoiceStatusData>();
-            }
-
-            try
-            {
-                var jsonContent = JsonConvert.SerializeObject(request);
-                var httpContent = new StringContent(jsonContent, Encoding.UTF8, "application/json");
-
-                var response = await _httpClient.PostAsync(StatusEndpoint, httpContent);
-
-                // Check success manually to read body if it fails, though status endpoint usually returns 
-                // 200 even with empty data, but we keep the robust check just in case.
-                if (!response.IsSuccessStatusCode)
-                {
-                    var errorContent = await response.Content.ReadAsStringAsync();
-                    var defaultError = $"API Error on Status retrieval ({response.StatusCode}): {errorContent}";
-                    _logger.LogError(defaultError);
-                    return new List<EInvoiceStatusData>();
-                }
-
-                var jsonResponse = await response.Content.ReadAsStringAsync();
-                var statusResponse = JsonConvert.DeserializeObject<EInvoiceStatusResponse>(jsonResponse);
-
+                var statusResponse = JsonConvert.DeserializeObject<EInvoiceStatusResponse>(result.Message);
                 return statusResponse?.Data ?? new List<EInvoiceStatusData>();
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Exception during E-Invoice status retrieval.");
-                return new List<EInvoiceStatusData>();
-            }
+            return new List<EInvoiceStatusData>();
         }
     }
 }

@@ -9,7 +9,8 @@ namespace SAP_LHDN.Models
     public class WorkerSettings
     {
         public string ApiBaseUrl { get; set; } = string.Empty;
-        // Corresponds to "WorkerSettings:PollingIntervalSeconds"
+        public string ApiStagingUrl { get; set; } = string.Empty;
+        public bool EnableTest { get; set; }
         public int PollingIntervalSeconds { get; set; }
     }
 }

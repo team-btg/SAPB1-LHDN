@@ -52,7 +52,7 @@ namespace SAP_LHDN
 
                 string hanaConnStr = configuration.GetConnectionString("Hana"); 
                 configuration.GetSection("WorkerSettings").Bind(workerSettings);
-
+                  
                 string apiBaseUrl = workerSettings.ApiBaseUrl;
 
                 if (string.IsNullOrEmpty(hanaConnStr))
@@ -60,6 +60,8 @@ namespace SAP_LHDN
                     throw new InvalidOperationException(
                         "The 'Hana' connection string is missing from appsettings.json or is empty. Cannot initialize HanaService.");
                 }
+
+                services.AddSingleton(workerSettings);
                 services.AddSingleton<HanaService>(provider =>
                 { 
                     return new HanaService(hanaConnStr);
