@@ -13,5 +13,6 @@ namespace SAP_LHDN.Models
         public string TableName { get; set; }
         public string SAPTableName { get; set; }
         public string DocType { get; set; }
+        public string CompanyCode { get; set; }
     }
 }

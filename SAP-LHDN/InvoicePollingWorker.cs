@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using System.Runtime;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -35,25 +36,29 @@ namespace SAP_LHDN
         }
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-        {
-            string mode = _settings.EnableTest ? "TEST/STAGING" : "PRODUCTION";
-            _logger.LogInformation($"--- E-Invoice Service Starting in {mode} Mode ---");
-
+        { 
             while (!stoppingToken.IsCancellationRequested)
             {
                 _logger.LogInformation($"--- Worker executing cycle at: {DateTimeOffset.Now} ---");
 
-                await CreateSalesInvoiceTask();
+                foreach (var company in _settings.Companies)
+                {
+                    if (!company.EnableTest) { continue; }
+                    string mode = company.EnableTest ? "TEST/STAGING" : "PRODUCTION";
+                    string activeUrl = company.EnableTest ? company.ApiStagingUrl : company.ApiBaseUrl;
 
-                //await CreateDownPaymentInvoiceTask();
+                    _logger.LogInformation($"--- E-Invoice Service Starting in {mode} Mode ---");
 
-                await CreatePurchaseInvoiceTask();
+                    await CreateSalesInvoiceTask(company.CompanyName, activeUrl, company.Username, company.Password); 
 
-                await CreateARCNDNTask();
+                    await CreatePurchaseInvoiceTask(company.CompanyName, activeUrl, company.Username, company.Password);
 
-                await CreateAPCNDNTask();
+                    await CreateARCNDNTask(company.CompanyName, activeUrl, company.Username, company.Password);
 
-                await GetStatusListTask();
+                    await CreateAPCNDNTask(company.CompanyName, activeUrl, company.Username, company.Password);
+
+                    await GetStatusListTask(company.CompanyName, activeUrl, company.Username, company.Password);
+                } 
 
                 _logger.LogInformation($"--- Cycle finished. Waiting {PollingInterval.TotalSeconds} seconds... ---");
 
@@ -70,12 +75,12 @@ namespace SAP_LHDN
             _logger.LogInformation("--- E-Invoice Polling Worker Service has stopped. ---");
         }
 
-        private async Task CreateDownPaymentInvoiceTask()
+        private async Task CreateDownPaymentInvoiceTask(string companyCode, string overrideBaseUrl, string username, string password)
         {
             DataTable oDt = null;
             try
             {
-                oDt = _hanaService.HanaSelectQuery("CALL EINV_STAGING.GET_ARDPINVOICE_DETAILS('SERVOMY', ?)");
+                oDt = _hanaService.HanaSelectQuery($"CALL EINV_STAGING.GET_ARDPINVOICE_DETAILS('{companyCode}', ?)");
             }
             catch (Exception ex)
             {
@@ -147,32 +152,32 @@ namespace SAP_LHDN
                     });
                 }
 
-                var result = await _invoiceService.CreateSalesInvoiceAsync(newInvoice);
+                var result = await _invoiceService.CreateSalesInvoiceAsync(newInvoice, overrideBaseUrl, username, password);
 
                 if (result.Success)
                 {
                     _logger.LogInformation($"[DPInvoice] SUCCESS RefNo {newInvoice.RefNo}: {result.Message}");
                     invoicesSubmitted++;
 
-                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EDPI", "Y");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EDPI", companyCode, "Y");
                 }
                 else
                 {
                     _logger.LogError($"[DPInvoice Create] FAILURE RefNo {newInvoice.RefNo}: {result.Message}");
 
-                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EDPI", "E", result.Message.Truncate(300));
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EDPI", companyCode, "E", result.Message.Truncate(300));
                 }
             }
 
             _logger.LogInformation($"[DPInvoice Create] Completed cycle. Total invoices processed and submitted: {invoicesSubmitted}");
         }
 
-        private async Task CreateSalesInvoiceTask()
+        private async Task CreateSalesInvoiceTask(string companyCode, string overrideBaseUrl, string username, string password)
         {
             DataTable oDt = null;
             try
             {
-                oDt = _hanaService.HanaSelectQuery("CALL EINV_STAGING.GET_INVOICE_DETAILS('SERVOMY', ?)");
+                oDt = _hanaService.HanaSelectQuery($"CALL EINV_STAGING.GET_INVOICE_DETAILS('{companyCode}', ?)");
             }
             catch (Exception ex)
             {
@@ -244,32 +249,32 @@ namespace SAP_LHDN
                     });
                 }
 
-                var result = await _invoiceService.CreateSalesInvoiceAsync(newInvoice);
+                var result = await _invoiceService.CreateSalesInvoiceAsync(newInvoice, overrideBaseUrl, username, password);
 
                 if (result.Success)
                 {
                     _logger.LogInformation($"[Sales Create] SUCCESS RefNo {newInvoice.RefNo}: {result.Message}");
                     invoicesSubmitted++;
 
-                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EINV", "Y");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EINV", companyCode, "Y");
                 }
                 else
                 {
                     _logger.LogError($"[Sales Create] FAILURE RefNo {newInvoice.RefNo}: {result.Message}");
 
-                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EINV", "E", result.Message.Truncate(300));
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EINV", companyCode, "E", result.Message.Truncate(300));
                 }
             }
 
             _logger.LogInformation($"[Sales Create] Completed cycle. Total invoices processed and submitted: {invoicesSubmitted}");
         }
 
-        private async Task CreatePurchaseInvoiceTask()
+        private async Task CreatePurchaseInvoiceTask(string companyCode, string overrideBaseUrl, string username, string password)
         {
             DataTable oDt = null;
             try
             {
-                oDt = _hanaService.HanaSelectQuery("CALL EINV_STAGING.GET_PURCHASEINVOICE_DETAILS('SERVOMY', ?)");
+                oDt = _hanaService.HanaSelectQuery($"CALL EINV_STAGING.GET_PURCHASEINVOICE_DETAILS('{companyCode}', ?)");
             }
             catch (Exception ex)
             {
@@ -342,32 +347,32 @@ namespace SAP_LHDN
                     });
                 }
 
-                var result = await _invoiceService.CreatePurchaseInvoiceAsync(newInvoice);
+                var result = await _invoiceService.CreatePurchaseInvoiceAsync(newInvoice, overrideBaseUrl, username, password);
 
                 if (result.Success)
                 {
                     _logger.LogInformation($"[Purchase Create] SUCCESS RefNo {newInvoice.RefNo}: {result.Message}");
                     invoicesSubmitted++;
 
-                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EPCH", "Y");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EPCH", companyCode, "Y");
                 }
                 else
                 {
                     _logger.LogError($"[Purchase Create] FAILURE RefNo {newInvoice.RefNo}: {result.Message}");
 
-                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EPCH", "E", result.Message.Truncate(300));
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "EPCH", companyCode, "E", result.Message.Truncate(300));
                 }
             }
 
             _logger.LogInformation($"[Purchase Create] Completed cycle. Total invoices processed and submitted: {invoicesSubmitted}");
         }
 
-        private async Task CreateARCNDNTask()
+        private async Task CreateARCNDNTask(string companyCode, string overrideBaseUrl, string username, string password)
         {
             DataTable oDt = null;
             try
             {
-                oDt = _hanaService.HanaSelectQuery("CALL EINV_STAGING.GET_ARCREDITMEMO_DETAILS('SERVOMY', ?)");
+                oDt = _hanaService.HanaSelectQuery($"CALL EINV_STAGING.GET_ARCREDITMEMO_DETAILS('{companyCode}', ?)");
             }
             catch (Exception ex)
             {
@@ -437,32 +442,32 @@ namespace SAP_LHDN
                     });
                 }
 
-                var result = await _invoiceService.CreateARCMAsync(newInvoice);
+                var result = await _invoiceService.CreateARCMAsync(newInvoice, overrideBaseUrl, username, password);
 
                 if (result.Success)
                 {
                     _logger.LogInformation($"[ARCM Create] SUCCESS RefNo {newInvoice.RefNo}: {result.Message}");
                     invoicesSubmitted++;
 
-                    await UpdateRecord(headerRow["DocEntry"].ToString(), "ERIN", "Y");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "ERIN", companyCode, "Y");
                 }
                 else
                 {
                     _logger.LogError($"[ARCM Create] FAILURE RefNo {newInvoice.RefNo}: {result.Message}");
 
-                    await UpdateRecord(headerRow["DocEntry"].ToString(), "ERIN", "E", result.Message.Truncate(300));
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "ERIN", companyCode, "E", result.Message.Truncate(300));
                 }
             }
 
             _logger.LogInformation($"[ARCM Create] Completed cycle. Total invoices processed and submitted: {invoicesSubmitted}");
         }
 
-        private async Task CreateAPCNDNTask()
+        private async Task CreateAPCNDNTask(string companyCode, string overrideBaseUrl, string username, string password)
         {
             DataTable oDt = null;
             try
             {
-                oDt = _hanaService.HanaSelectQuery("CALL EINV_STAGING.GET_APCREDITMEMO_DETAILS('SERVOMY', ?)");
+                oDt = _hanaService.HanaSelectQuery($"CALL EINV_STAGING.GET_APCREDITMEMO_DETAILS('{companyCode}', ?)");
             }
             catch (Exception ex)
             {
@@ -533,31 +538,31 @@ namespace SAP_LHDN
                     });
                 }
 
-                var result = await _invoiceService.CreateAPCMAsync(newInvoice);
+                var result = await _invoiceService.CreateAPCMAsync(newInvoice, overrideBaseUrl, username, password);
 
                 if (result.Success)
                 {
                     _logger.LogInformation($"[ARCM Create] SUCCESS RefNo {newInvoice.RefNo}: {result.Message}");
                     invoicesSubmitted++;
 
-                    await UpdateRecord(headerRow["DocEntry"].ToString(), "ERPC", "Y");
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "ERPC", companyCode, "Y");
                 }
                 else
                 {
                     _logger.LogError($"[APCM Create] FAILURE RefNo {newInvoice.RefNo}: {result.Message}");
 
-                    await UpdateRecord(headerRow["DocEntry"].ToString(), "ERPC", "E", result.Message.Truncate(300));
+                    await UpdateRecord(headerRow["DocEntry"].ToString(), "ERPC", companyCode, "E", result.Message.Truncate(300));
                 }
             }
 
             _logger.LogInformation($"[APCM Create] Completed cycle. Total invoices processed and submitted: {invoicesSubmitted}");
         }
 
-        private async Task GetStatusListTask()
+        private async Task GetStatusListTask(string companyCode, string overrideBaseUrl, string username, string password)
         {
             foreach (var docType in DocumentTypesToCheck)
             {
-                List<Reference> references = GetReferences(docType);
+                List<Reference> references = GetReferences(docType, companyCode);
                 if (references.Count > 0)
                 {
                     List<string> refNo = references
@@ -570,7 +575,7 @@ namespace SAP_LHDN
                         RefNo = refNo
                     };
 
-                    var listOfInvoices = await _invoiceService.GetEInvoiceStatusListAsync(request);
+                    var listOfInvoices = await _invoiceService.GetEInvoiceStatusListAsync(request, overrideBaseUrl, username, password);
                     if (listOfInvoices.Count > 0)
                     {
                         List<EInvoiceStatusData> validatedInvoices = listOfInvoices.Where(r => r.Status == "Validated").ToList();
@@ -581,7 +586,7 @@ namespace SAP_LHDN
                                 Reference reference = references.Where(w => w.DocNum == data.RefNo).FirstOrDefault();
 
                                 await UpdateRecord(reference.DocEntry, reference.TableName, "U", "");
-                                await UpdateSAPRecord(reference.SAPTableName, reference.DocEntry, data.EInvIRBMNo, data.EInvValDate.ToString(), data.EInvValLink);
+                                await UpdateSAPRecord(reference.CompanyCode, reference.SAPTableName, reference.DocEntry, data.EInvIRBMNo, data.EInvValDate.ToString(), data.EInvValLink);
                             }
                         }
                     }
@@ -598,18 +603,33 @@ namespace SAP_LHDN
             "APCNDN"
         };
 
-        private List<Reference> GetReferences(string tableName)
+        private List<Reference> GetReferences(string tableName, string companyCode)
         {
             List<Reference> references = new List<Reference>();
             Reference reference;
             DataTable oDt = null;
             try
             {
-                oDt = _hanaService.HanaSelectQuery($"SELECT * FROM EINV_STAGING.\"GetCapturedDocs\" WHERE \"DocType\" = '{tableName}' ");
+                StringBuilder sql = new StringBuilder();
+
+                sql.AppendLine("SELECT * FROM (");
+                sql.AppendLine($"  SELECT b.\"DocNum\", b.\"DocEntry\", 'EDPI' AS \"TableName\", 'ODPI' AS \"SAPTableName\", 'SInvoice' AS \"DocType\" FROM \"EINV_STAGING\".\"EDPI\" a INNER JOIN \"{companyCode}\".\"ODPI\" b ON a.\"DocEntry\" = b.\"DocEntry\" WHERE a.\"isCaptured\" = 'Y'");
+                sql.AppendLine("  UNION ALL");
+                sql.AppendLine($"  SELECT b.\"DocNum\", b.\"DocEntry\", 'EINV' AS \"TableName\", 'OINV' AS \"SAPTableName\", 'SInvoice' AS \"DocType\" FROM \"EINV_STAGING\".\"EINV\" a INNER JOIN \"{companyCode}\".\"OINV\" b ON a.\"DocEntry\" = b.\"DocEntry\" WHERE a.\"isCaptured\" = 'Y'");
+                sql.AppendLine("  UNION ALL");
+                sql.AppendLine($"  SELECT b.\"DocNum\", b.\"DocEntry\", 'EPCH' AS \"TableName\", 'OPCH' AS \"SAPTableName\", 'PInvoice' AS \"DocType\" FROM \"EINV_STAGING\".\"EPCH\" a INNER JOIN \"{companyCode}\".\"OPCH\" b ON a.\"DocEntry\" = b.\"DocEntry\" WHERE a.\"isCaptured\" = 'Y'");
+                sql.AppendLine("  UNION ALL");
+                sql.AppendLine($"  SELECT b.\"DocNum\", b.\"DocEntry\", 'ERIN' AS \"TableName\", 'ORIN' AS \"SAPTableName\", 'ARCNDN' AS \"DocType\" FROM \"EINV_STAGING\".\"ERIN\" a INNER JOIN \"{companyCode}\".\"ORIN\" b ON a.\"DocEntry\" = b.\"DocEntry\" WHERE a.\"isCaptured\" = 'Y'");
+                sql.AppendLine("  UNION ALL");
+                sql.AppendLine($"  SELECT b.\"DocNum\", b.\"DocEntry\", 'ERPC' AS \"TableName\", 'ORPC' AS \"SAPTableName\", 'APCNDN' AS \"DocType\" FROM \"EINV_STAGING\".\"ERPC\" a INNER JOIN \"{companyCode}\".\"ORPC\" b ON a.\"DocEntry\" = b.\"DocEntry\" WHERE a.\"isCaptured\" = 'Y'");
+                sql.AppendLine(") AS \"T\"");
+                sql.AppendLine($"WHERE \"DocType\" = '{tableName}'");
+
+                oDt = _hanaService.HanaSelectQuery(sql.ToString());
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to execute HANA Select Query for AP Credit Memo.");
+                _logger.LogError(ex, "Failed to execute HANA Select Query.");
                 return references;
             }
 
@@ -626,6 +646,7 @@ namespace SAP_LHDN
                 reference.DocEntry = _ref["DocEntry"].ToString();
                 reference.DocNum = _ref["DocNum"].ToString();
                 reference.DocType = _ref["DocType"].ToString();
+                reference.CompanyCode = companyCode;
 
                 references.Add(reference);
             }
@@ -633,7 +654,7 @@ namespace SAP_LHDN
             return references;
         }
 
-        async Task UpdateRecord(string docEntry, string tableName, string status, string message = "")
+        async Task UpdateRecord(string docEntry, string tableName, string companyCode, string status, string message = "")
         {
             try
             {
@@ -655,7 +676,7 @@ namespace SAP_LHDN
                              SET ""isCaptured"" = '{status}', 
                                  ""StatusMsg"" = '{safeMessage}', 
                                  ""{dateColumn}"" = now() 
-                             WHERE ""DocEntry"" = {docEntry}";
+                             WHERE ""DocEntry"" = {docEntry} AND ""DB_NAME"" = '{companyCode}'";
                  
                 await _hanaService.HanaExecuteNonQuery(sqlQuery);
             }
@@ -665,9 +686,9 @@ namespace SAP_LHDN
             }
         }
 
-        async Task UpdateSAPRecord(string sapTableName, string docEntry, string EInvIRBMNo, string EInvValDate, string EInvValLink)
+        async Task UpdateSAPRecord(string companyCode, string sapTableName, string docEntry, string EInvIRBMNo, string EInvValDate, string EInvValLink)
         {
-            await _hanaService.HanaExecuteNonQuery($"UPDATE SERVOMY.\"{sapTableName}\" SET \"U_EInvIRBMNo\" = '{EInvIRBMNo}', \"U_EInvValDate\" = '{EInvValDate}', \"U_EInvValLink\" = '{EInvValLink}' WHERE \"DocEntry\" = {docEntry}");
+            await _hanaService.HanaExecuteNonQuery($"UPDATE {companyCode}.\"{sapTableName}\" SET \"U_EInvIRBMNo\" = '{EInvIRBMNo}', \"U_EInvValDate\" = '{EInvValDate}', \"U_EInvValLink\" = '{EInvValLink}' WHERE \"DocEntry\" = {docEntry}");
         }
 
     }

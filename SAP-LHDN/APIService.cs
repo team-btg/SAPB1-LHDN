@@ -35,12 +35,7 @@ namespace SAP_LHDN.Models
         private const string ARCMEndpoint = "api/arcndn/create";
         private const string APCMEndpoint = "api/apcndn/create";
         private const string StatusEndpoint = "api/einvoicestatus";
-
-        // Auth Credentials (Staging provided by user)
-        private const string UsernameValue = "lqzpqlw-9fuevkd-vjz9-m2sq-kqclkqqmmnffg";
-        private const string PasswordValue = "exevnqn-r3u6-xsb3-68qc-plqtnhfnvfe";
-        private const string GrantType = "password";
-
+          
         public EInvoiceService(HttpClient httpClient, ILogger<EInvoiceService> logger, string apiBaseUrl)
         {
             _httpClient = httpClient;
@@ -63,23 +58,23 @@ namespace SAP_LHDN.Models
         /// <summary>
         /// Gets a valid token for the specific base URL provided.
         /// </summary>
-        public async Task<string> GetValidTokenAsync(string baseUrl)
+        public async Task<string> GetValidTokenAsync(string baseUrl, string username, string password)
         {
-            // 1. Check cache for valid token
-            if (_tokenCache.TryGetValue(baseUrl, out var cached) && DateTimeOffset.UtcNow < cached.expiry)
+            string cacheKey = $"{baseUrl}|{username}";
+
+            if (_tokenCache.TryGetValue(cacheKey, out var cached) && DateTimeOffset.UtcNow < cached.expiry)
             {
                 return cached.token;
             }
 
-            // 2. Request new token from environment-specific endpoint
             var tokenUrl = $"{baseUrl}/{TokenEndpoint.TrimStart('/')}";
-            _logger.LogInformation($"Requesting new token for environment: {baseUrl}");
+            _logger.LogInformation($"Requesting new token for: {baseUrl} (User: {username})");
 
             var authContent = new FormUrlEncodedContent(new[]
             {
-                new KeyValuePair<string, string>("username", UsernameValue),
-                new KeyValuePair<string, string>("password", PasswordValue),
-                new KeyValuePair<string, string>("grant_type", GrantType)
+                new KeyValuePair<string, string>("username", username),
+                new KeyValuePair<string, string>("password", password),
+                new KeyValuePair<string, string>("grant_type", "password")
             });
 
             try
@@ -93,7 +88,7 @@ namespace SAP_LHDN.Models
                 if (tokenResponse != null && !string.IsNullOrEmpty(tokenResponse.AccessToken))
                 {
                     var expiry = DateTimeOffset.UtcNow.AddSeconds(tokenResponse.ExpiresIn - 10);
-                    _tokenCache[baseUrl] = (tokenResponse.AccessToken, expiry);
+                    _tokenCache[cacheKey] = (tokenResponse.AccessToken, expiry);
                     return tokenResponse.AccessToken;
                 }
             }
@@ -108,12 +103,12 @@ namespace SAP_LHDN.Models
         /// <summary>
         /// Generic method to handle authorized POST requests to different environments.
         /// </summary>
-        private async Task<ServiceResult> SendAuthorizedRequestAsync<T>(string endpoint, T data, string overrideBaseUrl)
+        private async Task<ServiceResult> SendAuthorizedRequestAsync<T>(string endpoint, T data, string overrideBaseUrl, string username, string password)
         {
             var baseUrl = string.IsNullOrEmpty(overrideBaseUrl) ? _defaultApiBaseUrl : overrideBaseUrl.TrimEnd('/');
             var targetUrl = GetTargetUrl(endpoint, overrideBaseUrl);
 
-            var token = await GetValidTokenAsync(baseUrl);
+            var token = await GetValidTokenAsync(baseUrl, username, password);
             if (string.IsNullOrEmpty(token))
             {
                 return new ServiceResult { Success = false, Message = $"Authentication failed for {baseUrl}" };
@@ -180,9 +175,9 @@ namespace SAP_LHDN.Models
             return defaultMessage;
         }
 
-        public async Task<ServiceResult> CreateSalesInvoiceAsync(SalesInvoice newInvoice, string overrideBaseUrl = null)
+        public async Task<ServiceResult> CreateSalesInvoiceAsync(SalesInvoice newInvoice, string overrideBaseUrl, string username, string password)
         {
-            var result = await SendAuthorizedRequestAsync(SalesCreateEndpoint, newInvoice, overrideBaseUrl);
+            var result = await SendAuthorizedRequestAsync(SalesCreateEndpoint, newInvoice, overrideBaseUrl, username, password);
             if (result.Success)
             {
                 var successResponse = JsonConvert.DeserializeObject<ApiSuccessResponse>(result.Message);
@@ -191,9 +186,9 @@ namespace SAP_LHDN.Models
             return result;
         }
 
-        public async Task<ServiceResult> CreatePurchaseInvoiceAsync(PurchaseInvoice newInvoice, string overrideBaseUrl = null)
+        public async Task<ServiceResult> CreatePurchaseInvoiceAsync(PurchaseInvoice newInvoice, string overrideBaseUrl, string username, string password)
         {
-            var result = await SendAuthorizedRequestAsync(PurchaseCreateEndpoint, newInvoice, overrideBaseUrl);
+            var result = await SendAuthorizedRequestAsync(PurchaseCreateEndpoint, newInvoice, overrideBaseUrl, username, password);
             if (result.Success)
             {
                 var successResponse = JsonConvert.DeserializeObject<ApiSuccessResponse>(result.Message);
@@ -202,9 +197,9 @@ namespace SAP_LHDN.Models
             return result;
         }
 
-        public async Task<ServiceResult> CreateARCMAsync(ARCreditMemo newInvoice, string overrideBaseUrl = null)
+        public async Task<ServiceResult> CreateARCMAsync(ARCreditMemo newInvoice, string overrideBaseUrl, string username, string password)
         {
-            var result = await SendAuthorizedRequestAsync(ARCMEndpoint, newInvoice, overrideBaseUrl);
+            var result = await SendAuthorizedRequestAsync(ARCMEndpoint, newInvoice, overrideBaseUrl, username, password);
             if (result.Success)
             {
                 var successResponse = JsonConvert.DeserializeObject<ApiSuccessResponse>(result.Message);
@@ -213,9 +208,9 @@ namespace SAP_LHDN.Models
             return result;
         }
 
-        public async Task<ServiceResult> CreateAPCMAsync(APCreditMemo newInvoice, string overrideBaseUrl = null)
+        public async Task<ServiceResult> CreateAPCMAsync(APCreditMemo newInvoice, string overrideBaseUrl, string username, string password)
         {
-            var result = await SendAuthorizedRequestAsync(APCMEndpoint, newInvoice, overrideBaseUrl);
+            var result = await SendAuthorizedRequestAsync(APCMEndpoint, newInvoice, overrideBaseUrl, username, password);
             if (result.Success)
             {
                 var successResponse = JsonConvert.DeserializeObject<ApiSuccessResponse>(result.Message);
@@ -224,9 +219,9 @@ namespace SAP_LHDN.Models
             return result;
         }
 
-        public async Task<List<EInvoiceStatusData>> GetEInvoiceStatusListAsync(EInvoiceStatusRequest request, string overrideBaseUrl = null)
+        public async Task<List<EInvoiceStatusData>> GetEInvoiceStatusListAsync(EInvoiceStatusRequest request, string overrideBaseUrl, string username, string password)
         {
-            var result = await SendAuthorizedRequestAsync(StatusEndpoint, request, overrideBaseUrl);
+            var result = await SendAuthorizedRequestAsync(StatusEndpoint, request, overrideBaseUrl, username, password);
             if (result.Success)
             {
                 var statusResponse = JsonConvert.DeserializeObject<EInvoiceStatusResponse>(result.Message);

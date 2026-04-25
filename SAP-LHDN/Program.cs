@@ -53,7 +53,7 @@ namespace SAP_LHDN
                 string hanaConnStr = configuration.GetConnectionString("Hana"); 
                 configuration.GetSection("WorkerSettings").Bind(workerSettings);
                   
-                string apiBaseUrl = workerSettings.ApiBaseUrl;
+                string apiBaseUrl = string.Empty;
 
                 if (string.IsNullOrEmpty(hanaConnStr))
                 { 
